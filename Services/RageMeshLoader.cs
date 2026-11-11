@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Media.Media3D;
 using ClothPreview.Models;
@@ -33,7 +34,7 @@ namespace ClothPreview.Services
             foreach (var drawable in ydd.Drawables)
             {
                 // Solo LOD alto, para no duplicar geometría.
-                var models = drawable.DrawableModelsHigh?.data_items ?? drawable.AllModels;
+                var models = GetModels(drawable);
                 if (models == null) continue;
 
                 foreach (var model in models)
@@ -53,16 +54,17 @@ namespace ClothPreview.Services
         {
             var vb = geom.VertexBuffer;
             var ib = geom.IndexBuffer;
-            if (vb == null || ib?.Indices == null || vb.Data1 == null) return null;
+            if (vb == null || ib?.Indices == null) return null;
 
-            byte[] buf = vb.Data1;
+            byte[] buf = GetBytes(vb.Data1);
+            if (buf == null) return null;
             int stride = vb.VertexStride;
             int count = (int)vb.VertexCount;
-            if (stride <= 0 || count <= 0) return null;
+            if (stride <= 0 || count <= 0 || (long)stride * count > buf.Length) return null;
 
             // Offsets de cada componente a partir de Flags (bit por slot) y Types (4 bits por slot)
-            ulong flags = vb.Info.Flags;
-            ulong types = vb.Info.Types;
+            ulong flags = Convert.ToUInt64(vb.Info.Flags);
+            ulong types = Convert.ToUInt64(vb.Info.Types);
             var offset = new int[16];
             var type = new int[16];
             int off = 0;
@@ -119,6 +121,75 @@ namespace ClothPreview.Services
             }
             part.Indices = idx.ToArray();
             return part.Indices.Length > 0 ? part : null;
+        }
+
+        // --- Búsqueda tolerante a cambios de nombre en CodeWalker ---
+
+        static DrawableModel[] GetModels(Drawable d)
+        {
+            DrawableModel[] best = null;
+            int bestScore = -1;
+            foreach (var m in d.GetType().GetMembers(BindingFlags.Public | BindingFlags.Instance))
+            {
+                object val = null;
+                try
+                {
+                    var pi = m as PropertyInfo;
+                    var fi = m as FieldInfo;
+                    if (pi != null && pi.GetIndexParameters().Length == 0) val = pi.GetValue(d, null);
+                    else if (fi != null) val = fi.GetValue(d);
+                }
+                catch { continue; }
+
+                var arr = AsModels(val);
+                if (arr == null || arr.Length == 0) continue;
+
+                string n = m.Name.ToLowerInvariant();
+                int score = n.Contains("high") ? 3
+                          : (n.Contains("med") || n.Contains("low")) ? 0
+                          : n == "allmodels" ? 1 : 2;
+                if (score > bestScore) { best = arr; bestScore = score; }
+            }
+            return best;
+        }
+
+        static DrawableModel[] AsModels(object val)
+        {
+            if (val == null) return null;
+            var direct = val as DrawableModel[];
+            if (direct != null) return direct;
+            var t = val.GetType();
+            object inner = null;
+            var f = t.GetField("data_items", BindingFlags.Public | BindingFlags.Instance);
+            if (f != null) inner = f.GetValue(val);
+            else
+            {
+                var p = t.GetProperty("data_items", BindingFlags.Public | BindingFlags.Instance);
+                if (p != null) inner = p.GetValue(val, null);
+            }
+            return inner as DrawableModel[];
+        }
+
+        static byte[] GetBytes(object o)
+        {
+            if (o == null) return null;
+            var direct = o as byte[];
+            if (direct != null) return direct;
+            foreach (var m in o.GetType().GetMembers(BindingFlags.Public | BindingFlags.Instance))
+            {
+                object val = null;
+                try
+                {
+                    var pi = m as PropertyInfo;
+                    var fi = m as FieldInfo;
+                    if (pi != null && pi.GetIndexParameters().Length == 0) val = pi.GetValue(o, null);
+                    else if (fi != null) val = fi.GetValue(o);
+                }
+                catch { continue; }
+                var bytes = val as byte[];
+                if (bytes != null && bytes.Length > 0) return bytes;
+            }
+            return null;
         }
 
         static double Half(ushort h)
