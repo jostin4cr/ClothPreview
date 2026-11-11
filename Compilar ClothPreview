@@ -1,0 +1,27 @@
+name: Compilar ClothPreview
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descargar CodeWalker
+        run: git clone --depth 1 https://github.com/dexyfex/CodeWalker libs/CodeWalker
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Compilar
+        run: dotnet build ClothPreview.csproj -c Release
+
+      - name: Guardar programa
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClothPreview
+          path: bin/Release/net48
