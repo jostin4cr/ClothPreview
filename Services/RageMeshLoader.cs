@@ -27,7 +27,11 @@ namespace ClothPreview.Services
             var data = File.ReadAllBytes(path);
             var ydd = new YddFile();
             RpfFile.LoadResourceFile(ydd, data, 165);   // 165 = versión de recurso de YDD
+            return FromYdd(ydd);
+        }
 
+        public static List<MeshPart> FromYdd(YddFile ydd)
+        {
             var parts = new List<MeshPart>();
             if (ydd.Drawables == null) return parts;
 

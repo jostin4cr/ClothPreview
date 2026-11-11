@@ -22,6 +22,20 @@ namespace ClothPreview.Services
             return p >= 0 ? name.Substring(p + 1) : name;
         }
 
+        /// Detecta hombre/mujer por el nombre de las carpetas y del archivo (mp_m_..., mp_f_..., male, female, mujer...).
+        public static Gender DetectGender(string path)
+        {
+            var parts = path.Replace('/', '\\').Split('\\');
+            var last = parts.Skip(Math.Max(0, parts.Length - 4)).ToArray();
+            string text = string.Join(" ", last).ToLowerInvariant();
+            var tokens = Regex.Split(text, @"[^a-z0-9]+").Where(t => t.Length > 0).ToList();
+            bool f = tokens.Any(t => t == "f" || t == "female" || t == "fem" || t == "mujer" || t == "woman" || t == "women" || t == "girl");
+            bool m = tokens.Any(t => t == "m" || t == "male" || t == "hombre" || t == "man" || t == "men" || t == "boy");
+            if (f && !m) return Gender.Female;
+            if (m && !f) return Gender.Male;
+            return Gender.Unknown;
+        }
+
         public static List<ClothItem> Scan(IEnumerable<string> paths)
         {
             var files = new List<string>();
@@ -48,7 +62,8 @@ namespace ClothPreview.Services
                         Component = m.Groups["c"].Value.ToLowerInvariant(),
                         Index = int.Parse(m.Groups["i"].Value),
                         Suffix = m.Groups["s"].Value.ToLowerInvariant(),
-                        YddPath = f
+                        YddPath = f,
+                        Gender = DetectGender(f)
                     });
                 }
                 else if (ext == ".ytd")

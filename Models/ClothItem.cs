@@ -4,6 +4,8 @@ using System.Windows.Media.Media3D;
 
 namespace ClothPreview.Models
 {
+    public enum Gender { Unknown, Male, Female }
+
     public class TextureVariant
     {
         public string Label { get; set; }
@@ -16,8 +18,9 @@ namespace ClothPreview.Models
         public int Index { get; set; }
         public string Suffix { get; set; }      // u (universal) o r (race)
         public string YddPath { get; set; }
+        public Gender Gender { get; set; }
         public List<TextureVariant> Textures { get; } = new List<TextureVariant>();
-        public string Display => $"{Component}_{Index:000}_{Suffix}  ({Textures.Count} tex)";
+        public string Display => $"{Component}_{Index:000}_{Suffix}  ({Textures.Count} tex)" + (Gender == Gender.Male ? "  ♂" : Gender == Gender.Female ? "  ♀" : "");
     }
 
     public class MeshPart

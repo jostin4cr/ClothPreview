@@ -29,3 +29,8 @@ Se emparejan por componente + número. Las variaciones (a, b, c…) salen en el 
 - No incluye cuerpo base (ped); la prenda se ve flotando.
 - Solo ropa (componentes), no props (`p_head`, etc.).
 - Licencia: CodeWalker es GPL-3.0; si distribuyes este programa, revisa esa licencia.
+
+## Cuerpo hombre/mujer
+1. Pulsa **Importar cuerpo desde GTA V…** y elige `GTA5.exe` (solo una vez, tarda unos minutos).
+2. Se crean `body_male.bin` y `body_female.bin` junto al programa; no se redistribuyen modelos de Rockstar.
+3. El género se detecta por el nombre de la carpeta/archivo (mp_m_, mp_f_, male, female, mujer…) o se elige a mano.

@@ -26,7 +26,7 @@ namespace ClothPreview.Services
             using (var img = Pfimage.FromStream(new MemoryStream(dds)))
             {
                 PixelFormat pf;
-                if (img.Format == ImageFormat.Rgba32) pf = PixelFormats.Bgra32;   // Pfim entrega BGRA
+                if (img.Format == ImageFormat.Rgba32) pf = PixelFormats.Bgr32;    // BGRA pero SIN transparencia: en GTA el alfa guarda otros datos
                 else if (img.Format == ImageFormat.Rgb24) pf = PixelFormats.Bgr24;
                 else return null;   // formatos raros (p. ej. algunos BC7): ver README
 

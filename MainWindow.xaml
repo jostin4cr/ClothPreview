@@ -18,10 +18,20 @@
         <TextBlock Text="Variación de textura" />
         <ComboBox x:Name="VariantBox" DisplayMemberPath="Label" Margin="0,2,0,8"
                   SelectionChanged="VariantBox_SelectionChanged" />
-        <CheckBox x:Name="ShowTexture" Content="Mostrar textura" IsChecked="True"
+        <TextBlock Text="Personaje" />
+        <ComboBox x:Name="GenderBox" SelectedIndex="0" Margin="0,2,0,8" SelectionChanged="Gender_Changed">
+          <ComboBoxItem Content="Automático (según la prenda)" />
+          <ComboBoxItem Content="Hombre" />
+          <ComboBoxItem Content="Mujer" />
+        </ComboBox>
+        <CheckBox x:Name="ShowBody" Content="Mostrar cuerpo" IsChecked="True"
+                  Checked="Option_Changed" Unchecked="Option_Changed" />
+        <CheckBox x:Name="ShowTexture" Content="Mostrar textura" IsChecked="True" Margin="0,4,0,0"
                   Checked="Option_Changed" Unchecked="Option_Changed" />
         <CheckBox x:Name="WireBox" Content="Mostrar malla (wireframe)" Margin="0,4,0,0"
                   Checked="Option_Changed" Unchecked="Option_Changed" />
+        <Button x:Name="ImportButton" Content="Importar cuerpo desde GTA V…" Margin="0,10,0,0" Padding="4"
+                Click="ImportBody_Click" />
         <TextBlock x:Name="Info" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="DimGray" />
       </StackPanel>
       <ListBox x:Name="ItemList" DisplayMemberPath="Display" SelectionChanged="ItemList_SelectionChanged" />
