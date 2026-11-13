@@ -28,6 +28,8 @@ namespace ClothPreview
         readonly AxisAngleRotation3D _spin = new AxisAngleRotation3D(new Vector3D(0, 0, 1), 0);
         bool _ready;
         bool _suppress;
+        bool _suppressSel;
+        readonly List<string> _paths = new List<string>();
 
         public MainWindow()
         {
@@ -87,19 +89,75 @@ namespace ClothPreview
             if (e.Data.GetData(DataFormats.FileDrop) is string[] p) LoadPaths(p);
         }
 
+        /// Añade archivos a la lista (sin quitar lo que ya había) y conserva las prendas equipadas.
         void LoadPaths(IEnumerable<string> paths)
         {
-            var items = ClothPairing.Scan(paths);
-            _active = null;
-            _framed = false;
-            ItemList.ItemsSource = items;
+            foreach (var p in paths)
+                if (!_paths.Contains(p, StringComparer.OrdinalIgnoreCase)) _paths.Add(p);
+
+            var scanned = ClothPairing.Scan(_paths);
+            var current = (ItemList.ItemsSource as List<ClothItem>) ?? new List<ClothItem>();
+            var byPath = new Dictionary<string, ClothItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in current) byPath[c.YddPath] = c;
+
+            var merged = new List<ClothItem>();
+            var added = new List<ClothItem>();
+            foreach (var sItem in scanned)
+            {
+                ClothItem ex;
+                if (byPath.TryGetValue(sItem.YddPath, out ex))
+                {
+                    // Pueden haber llegado texturas nuevas para una prenda que ya estaba
+                    if (ex.Textures.Count != sItem.Textures.Count)
+                    {
+                        ex.Textures.Clear();
+                        ex.Textures.AddRange(sItem.Textures);
+                        if (ex.Parts != null && ex.Tex == null && ex.Textures.Count > 0)
+                            ex.Tex = SafeTexture(ex.Textures[0].Path);
+                    }
+                    merged.Add(ex);
+                }
+                else { merged.Add(sItem); added.Add(sItem); }
+            }
+
+            var selected = ItemList.SelectedItems.Cast<ClothItem>().Where(x => merged.Contains(x)).ToList();
+            var activeBefore = _active;
+
+            _suppressSel = true;
+            try
+            {
+                ItemList.ItemsSource = merged;
+                foreach (var x in selected) ItemList.SelectedItems.Add(x);
+            }
+            finally { _suppressSel = false; }
+
+            _active = (activeBefore != null && selected.Contains(activeBefore)) ? activeBefore : selected.LastOrDefault();
             ShowActive();
-            Info.Text = items.Count + " prendas encontradas.\nHaz clic en una (o en varias) para equiparla.";
-            if (items.Count > 0) ItemList.SelectedIndex = 0;
-            else Rebuild(false);
+            Rebuild(false);
+
+            Info.Text = merged.Count + " prendas en la lista (" + added.Count + " nuevas).\nHaz clic en una para equiparla; puedes elegir varias.";
+
+            // Si se añadió una sola prenda (o la lista estaba vacía), se equipa sola
+            if (added.Count == 1) ItemList.SelectedItems.Add(added[0]);
+            else if (current.Count == 0 && merged.Count > 0) ItemList.SelectedItems.Add(merged[0]);
         }
 
+        // Quita las prendas equipadas (la lista se queda)
         void Clear_Click(object sender, RoutedEventArgs e) { ItemList.UnselectAll(); }
+
+        // Vacía la lista y los archivos acumulados
+        void Empty_Click(object sender, RoutedEventArgs e)
+        {
+            _paths.Clear();
+            _active = null;
+            _framed = false;
+            _suppressSel = true;
+            try { ItemList.ItemsSource = null; }
+            finally { _suppressSel = false; }
+            ShowActive();
+            Rebuild(false);
+            Info.Text = "Lista vacía. Arrastra tus archivos.";
+        }
 
         static BitmapSource SafeTexture(string path)
         {
@@ -131,7 +189,7 @@ namespace ClothPreview
 
         void ItemList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (!_ready) return;
+            if (!_ready || _suppressSel) return;
             foreach (var o in e.AddedItems) EnsureLoaded(o as ClothItem);
 
             var sel = ItemList.SelectedItems.Cast<ClothItem>().ToList();

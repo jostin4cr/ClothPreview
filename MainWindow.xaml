@@ -250,9 +250,11 @@
                      Text="…o arrastra una carpeta o los archivos de tu pack a esta ventana." />
           <StackPanel Grid.Row="2">
             <Grid>
-              <TextBlock Style="{StaticResource SectionTitle}" Text="PRENDAS  (clic para equipar, puedes elegir varias)" />
-              <Button Style="{StaticResource RedButton}" Content="LIMPIAR" Padding="8,2" FontSize="10"
-                      HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,4" Click="Clear_Click" />
+              <TextBlock Style="{StaticResource SectionTitle}" Text="PRENDAS" />
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,4">
+                <Button Style="{StaticResource RedButton}" Content="QUITAR PRENDAS" Padding="8,2" FontSize="10" Margin="0,0,6,0" Click="Clear_Click" />
+                <Button Style="{StaticResource RedButton}" Content="VACIAR LISTA" Padding="8,2" FontSize="10" Click="Empty_Click" />
+              </StackPanel>
             </Grid>
             <ListBox x:Name="ItemList" Background="Transparent" BorderThickness="0" MaxHeight="170" SelectionMode="Multiple"
                      DisplayMemberPath="Display" ItemContainerStyle="{StaticResource RowItem}"
