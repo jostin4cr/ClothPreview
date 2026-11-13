@@ -34,3 +34,6 @@ Se emparejan por componente + número. Las variaciones (a, b, c…) salen en el 
 1. Pulsa **Importar cuerpo desde GTA V…** y elige `GTA5.exe` (solo una vez, tarda unos minutos).
 2. Se crean `body_male.bin` y `body_female.bin` junto al programa; no se redistribuyen modelos de Rockstar.
 3. El género se detecta por el nombre de la carpeta/archivo (mp_m_, mp_f_, male, female, mujer…) o se elige a mano.
+
+## Interfaz
+Diseño negro/rojo de 420 Tool´s. Las 'Partes de la prenda' permiten ocultar geometrías que se vean mal.

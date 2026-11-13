@@ -38,18 +38,21 @@ namespace ClothPreview.Services
             foreach (var drawable in ydd.Drawables)
             {
                 // Solo LOD alto, para no duplicar geometría.
-                var models = GetModels(drawable);
+                int score;
+                var models = GetModels(drawable, out score);
                 if (models == null) continue;
 
+                var dparts = new List<MeshPart>();
                 foreach (var model in models)
                 {
                     if (model?.Geometries == null) continue;
                     foreach (var geom in model.Geometries)
                     {
                         var part = ReadGeometry(geom);
-                        if (part != null) parts.Add(part);
+                        if (part != null) dparts.Add(part);
                     }
                 }
+                parts.AddRange(score < 3 ? DropLodDuplicates(dparts) : dparts);
             }
             return parts;
         }
@@ -129,32 +132,107 @@ namespace ClothPreview.Services
 
         // --- Búsqueda tolerante a cambios de nombre en CodeWalker ---
 
-        static DrawableModel[] GetModels(Drawable d)
+        public static string LastSource = "";
+
+        static object ReadMember(MemberInfo m, object target)
+        {
+            try
+            {
+                var pi = m as PropertyInfo;
+                var fi = m as FieldInfo;
+                if (pi != null && pi.GetIndexParameters().Length == 0) return pi.GetValue(target, null);
+                if (fi != null) return fi.GetValue(target);
+            }
+            catch { }
+            return null;
+        }
+
+        /// Busca los modelos del LOD alto. score: 4 = anidado "High", 3 = miembro "High",
+        /// 2 = otro, 1 = AllModels (mezcla todos los LOD), 0 = LOD bajo.
+        static DrawableModel[] GetModels(Drawable d, out int bestScore)
         {
             DrawableModel[] best = null;
-            int bestScore = -1;
-            foreach (var m in d.GetType().GetMembers(BindingFlags.Public | BindingFlags.Instance))
+            bestScore = -1;
+            string src = "";
+            const BindingFlags F = BindingFlags.Public | BindingFlags.Instance;
+
+            foreach (var m in d.GetType().GetMembers(F))
             {
-                object val = null;
-                try
-                {
-                    var pi = m as PropertyInfo;
-                    var fi = m as FieldInfo;
-                    if (pi != null && pi.GetIndexParameters().Length == 0) val = pi.GetValue(d, null);
-                    else if (fi != null) val = fi.GetValue(d);
-                }
-                catch { continue; }
+                object val = ReadMember(m, d);
+                if (val == null) continue;
+                string n = m.Name.ToLowerInvariant();
 
                 var arr = AsModels(val);
-                if (arr == null || arr.Length == 0) continue;
+                if (arr != null && arr.Length > 0)
+                {
+                    int score = n.Contains("high") ? 3
+                              : (n.Contains("med") || n.Contains("low")) ? 0
+                              : n == "allmodels" ? 1 : 2;
+                    if (score > bestScore) { best = arr; bestScore = score; src = m.Name; }
+                    continue;
+                }
 
-                string n = m.Name.ToLowerInvariant();
-                int score = n.Contains("high") ? 3
-                          : (n.Contains("med") || n.Contains("low")) ? 0
-                          : n == "allmodels" ? 1 : 2;
-                if (score > bestScore) { best = arr; bestScore = score; }
+                // Objeto anidado de CodeWalker (por ejemplo DrawableModels.High)
+                var t = val.GetType();
+                if (val is string || t.IsPrimitive || t.IsEnum || val is Array) continue;
+                if (t.Namespace != "CodeWalker.GameFiles") continue;
+                foreach (var nm in t.GetMembers(F))
+                {
+                    string nn = nm.Name.ToLowerInvariant();
+                    if (!(nn == "hi" || nn.Contains("high"))) continue;
+                    var inner = AsModels(ReadMember(nm, val));
+                    if (inner != null && inner.Length > 0 && 4 > bestScore)
+                    {
+                        best = inner; bestScore = 4; src = m.Name + "." + nm.Name;
+                    }
+                }
             }
+            LastSource = (src == "" ? "ninguna" : src) + " [nivel " + bestScore + "]";
             return best;
+        }
+
+        // Si no se pudo aislar el LOD alto, quita las copias casi idénticas (LOD medio/bajo).
+        static List<MeshPart> DropLodDuplicates(List<MeshPart> list)
+        {
+            var kept = new List<MeshPart>();
+            foreach (var p in list.OrderByDescending(x => x.Indices.Length))
+            {
+                var b = Bounds(p);
+                bool dup = false;
+                foreach (var k in kept)
+                    if (Similar(b, Bounds(k))) { dup = true; break; }
+                if (!dup) kept.Add(p);
+            }
+            return kept;
+        }
+
+        static Rect3D Bounds(MeshPart p)
+        {
+            double x0 = double.MaxValue, y0 = double.MaxValue, z0 = double.MaxValue;
+            double x1 = double.MinValue, y1 = double.MinValue, z1 = double.MinValue;
+            foreach (var v in p.Positions)
+            {
+                if (v.X < x0) x0 = v.X; if (v.X > x1) x1 = v.X;
+                if (v.Y < y0) y0 = v.Y; if (v.Y > y1) y1 = v.Y;
+                if (v.Z < z0) z0 = v.Z; if (v.Z > z1) z1 = v.Z;
+            }
+            return new Rect3D(x0, y0, z0, x1 - x0, y1 - y0, z1 - z0);
+        }
+
+        static double Ratio(double a, double b)
+        {
+            double hi = Math.Max(a, b), lo = Math.Min(a, b);
+            return hi < 1e-6 ? 1 : lo / hi;
+        }
+
+        static bool Similar(Rect3D a, Rect3D b)
+        {
+            double m = Math.Max(Math.Max(b.SizeX, b.SizeY), b.SizeZ);
+            if (m <= 0) return false;
+            return Ratio(a.SizeX, b.SizeX) > 0.85 && Ratio(a.SizeY, b.SizeY) > 0.85 && Ratio(a.SizeZ, b.SizeZ) > 0.85
+                && Math.Abs((a.X + a.SizeX / 2) - (b.X + b.SizeX / 2)) < 0.1 * m
+                && Math.Abs((a.Y + a.SizeY / 2) - (b.Y + b.SizeY / 2)) < 0.1 * m
+                && Math.Abs((a.Z + a.SizeZ / 2) - (b.Z + b.SizeZ / 2)) < 0.1 * m;
         }
 
         static DrawableModel[] AsModels(object val)

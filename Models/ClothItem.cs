@@ -23,6 +23,12 @@ namespace ClothPreview.Models
         public string Display => $"{Component}_{Index:000}_{Suffix}  ({Textures.Count} tex)" + (Gender == Gender.Male ? "  ♂" : Gender == Gender.Female ? "  ♀" : "");
     }
 
+    public class PartToggle
+    {
+        public string Name { get; set; }
+        public bool IsVisible { get; set; } = true;
+    }
+
     public class MeshPart
     {
         public Point3D[] Positions;

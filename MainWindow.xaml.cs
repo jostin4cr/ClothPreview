@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
 using ClothPreview.Models;
@@ -14,17 +18,57 @@ namespace ClothPreview
 {
     public partial class MainWindow : Window
     {
+        [DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
         List<MeshPart> _parts = new List<MeshPart>();
+        List<PartToggle> _toggles = new List<PartToggle>();
         BitmapSource _tex;
         ClothItem _item;
         readonly Dictionary<Gender, Dictionary<string, List<MeshPart>>> _bodies =
             new Dictionary<Gender, Dictionary<string, List<MeshPart>>>();
+        readonly AxisAngleRotation3D _spin = new AxisAngleRotation3D(new Vector3D(0, 0, 1), 0);
         bool _ready;
+        bool _suppress;
 
         public MainWindow()
         {
             InitializeComponent();
+            var rot = new RotateTransform3D(_spin);
+            ModelHost.Transform = rot;
+            Wire.Transform = rot;
             _ready = true;
+            Info.Text = "Listo.";
+            Loaded += MainWindow_Loaded;
+        }
+
+        // Barra de título oscura (Windows 10/11)
+        protected override void OnSourceInitialized(EventArgs e)
+        {
+            base.OnSourceInitialized(e);
+            try
+            {
+                var h = new WindowInteropHelper(this).Handle;
+                int on = 1;
+                DwmSetWindowAttribute(h, 20, ref on, 4);
+                DwmSetWindowAttribute(h, 19, ref on, 4);
+                int cap = 0x000A0A0A; DwmSetWindowAttribute(h, 35, ref cap, 4);
+                int txt = 0x00FFFFFF; DwmSetWindowAttribute(h, 36, ref txt, 4);
+            }
+            catch { }
+        }
+
+        void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            bool hasBody = File.Exists(BodyImporter.CachePath(Gender.Male)) && File.Exists(BodyImporter.CachePath(Gender.Female));
+            if (!hasBody)
+            {
+                var r = MessageBox.Show(
+                    "Para ver las prendas puestas en un personaje (hombre o mujer) hay que importar el cuerpo desde tu GTA V.\n" +
+                    "Se hace una sola vez y tarda unos minutos.\n\n¿Importarlo ahora?",
+                    "420 Tool´s", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (r == MessageBoxResult.Yes) ImportBody_Click(null, null);
+            }
         }
 
         // ---------- Carga de archivos ----------
@@ -56,6 +100,15 @@ namespace ClothPreview
             try { _parts = RageMeshLoader.Load(_item.YddPath); }
             catch (Exception ex) { _parts = new List<MeshPart>(); Info.Text = "Error leyendo el modelo: " + ex.Message; }
 
+            _toggles = _parts.Select((p, i) => new PartToggle
+            {
+                Name = "Parte " + (i + 1) + " · " + (p.Indices.Length / 3) + " tri",
+                IsVisible = true
+            }).ToList();
+            _suppress = true;
+            PartList.ItemsSource = _toggles;
+            _suppress = false;
+
             VariantBox.ItemsSource = _item.Textures;
             if (_item.Textures.Count > 0) VariantBox.SelectedIndex = 0;   // dispara el cambio de textura
             else { _tex = null; Rebuild(true); }
@@ -70,7 +123,26 @@ namespace ClothPreview
         }
 
         void Option_Changed(object sender, RoutedEventArgs e) { if (_ready) Rebuild(false); }
-        void Gender_Changed(object sender, SelectionChangedEventArgs e) { if (_ready) Rebuild(true); }
+        void Gender_Changed(object sender, RoutedEventArgs e) { if (_ready) Rebuild(true); }
+
+        void Part_Toggled(object sender, RoutedEventArgs e)
+        {
+            var cb = sender as CheckBox;
+            var t = cb == null ? null : cb.DataContext as PartToggle;
+            if (t == null || _suppress) return;
+            t.IsVisible = cb.IsChecked == true;
+            if (_ready) Rebuild(false);
+        }
+
+        void Spin_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_ready) return;
+            if (SpinBox.IsChecked == true)
+                _spin.BeginAnimation(AxisAngleRotation3D.AngleProperty,
+                    new DoubleAnimation(0, 360, TimeSpan.FromSeconds(14)) { RepeatBehavior = RepeatBehavior.Forever });
+            else
+                _spin.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
+        }
 
         // ---------- Cuerpo base ----------
 
@@ -81,7 +153,7 @@ namespace ClothPreview
             string folder = Path.GetDirectoryName(dlg.FileName);
 
             ImportButton.IsEnabled = false;
-            Info.Text = "Leyendo GTA V… puede tardar varios minutos. No cierres el programa.";
+            Info.Text = "Leyendo GTA V… puede tardar varios minutos.\nNo cierres el programa.";
             try
             {
                 await System.Threading.Tasks.Task.Run(() =>
@@ -89,7 +161,7 @@ namespace ClothPreview
                 _bodies.Clear();
                 Rebuild(true);
             }
-            catch (Exception ex) { Info.Text = "Error importando el cuerpo: " + ex.Message; }
+            catch (Exception ex) { Info.Text = "Error importando el cuerpo:\n" + ex.Message; }
             finally { ImportButton.IsEnabled = true; }
         }
 
@@ -101,14 +173,11 @@ namespace ClothPreview
 
         Gender ResolveGender(out string note)
         {
-            switch (GenderBox.SelectedIndex)
-            {
-                case 1: note = "Hombre"; return Gender.Male;
-                case 2: note = "Mujer"; return Gender.Female;
-            }
-            if (_item != null && _item.Gender == Gender.Female) { note = "Mujer (detectado por el nombre)"; return Gender.Female; }
-            if (_item != null && _item.Gender == Gender.Male) { note = "Hombre (detectado por el nombre)"; return Gender.Male; }
-            note = "Hombre (no se pudo detectar; cámbialo arriba si es de mujer)";
+            if (GenMale.IsChecked == true) { note = "Hombre"; return Gender.Male; }
+            if (GenFemale.IsChecked == true) { note = "Mujer"; return Gender.Female; }
+            if (_item != null && _item.Gender == Gender.Female) { note = "Mujer (detectado)"; return Gender.Female; }
+            if (_item != null && _item.Gender == Gender.Male) { note = "Hombre (detectado)"; return Gender.Male; }
+            note = "Hombre (no detectado)";
             return Gender.Male;
         }
 
@@ -156,28 +225,33 @@ namespace ClothPreview
 
             var group = new Model3DGroup();
             string bodyNote = "";
+            bool bodyMissing = false;
 
             // Cuerpo (sin la pieza que reemplaza la prenda)
             if (ShowBody.IsChecked == true)
             {
                 var body = GetBody(gender);
-                if (body == null) bodyNote = "\nCuerpo: sin importar (pulsa el botón de abajo)";
+                if (body == null) { bodyMissing = true; bodyNote = "\nCUERPO   sin importar"; }
                 else
                 {
                     Material skin = MakeMaterial(new SolidColorBrush(Color.FromRgb(214, 168, 140)), 0.35);
+                    int shown = 0;
                     foreach (var kv in body)
                     {
                         if (_item != null && kv.Key == _item.Component) continue;
-                        foreach (var part in kv.Value) AddPart(group, part, skin);
+                        foreach (var part in kv.Value) { AddPart(group, part, skin); shown++; }
                     }
+                    bodyNote = "\nCUERPO   " + body.Count + " piezas";
                 }
             }
 
             // Prenda
             var wire = new Point3DCollection();
             int tris = 0;
-            foreach (var p in _parts)
+            for (int n = 0; n < _parts.Count; n++)
             {
+                if (n < _toggles.Count && !_toggles[n].IsVisible) continue;
+                var p = _parts[n];
                 tris += AddPart(group, p, clothMat);
                 if (WireBox.IsChecked == true)
                     for (int i = 0; i + 2 < p.Indices.Length; i += 3)
@@ -193,9 +267,15 @@ namespace ClothPreview
             Wire.Points = wire;
             if (zoom && group.Children.Count > 0) Viewport.ZoomExtents();
 
-            string texInfo = _tex != null ? "Textura: " + _tex.PixelWidth + "x" + _tex.PixelHeight : "Sin textura";
-            Info.Text = "Triángulos: " + tris.ToString("N0") + "\nPartes (geometrías): " + _parts.Count +
-                        "\n" + texInfo + "\nPersonaje: " + genderNote + bodyNote;
+            BodyOverlay.Visibility = bodyMissing ? Visibility.Visible : Visibility.Collapsed;
+            DropHint.Visibility = _item == null ? Visibility.Visible : Visibility.Collapsed;
+            ItemTitle.Text = _item == null ? "SIN PRENDA" : _item.Component.ToUpperInvariant() + "_" + _item.Index.ToString("000");
+
+            string texInfo = _tex != null ? _tex.PixelWidth + "x" + _tex.PixelHeight : "ninguna";
+            Info.Text = "TRIÁNGULOS " + tris.ToString("N0") + "   PARTES " + _parts.Count +
+                        "\nTEXTURA  " + texInfo +
+                        "\nPERSONAJE " + genderNote + bodyNote +
+                        "\nMODELOS  " + RageMeshLoader.LastSource;
         }
     }
 }
