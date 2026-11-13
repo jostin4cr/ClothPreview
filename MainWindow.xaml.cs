@@ -26,6 +26,7 @@ namespace ClothPreview
         bool _framed;
         readonly Dictionary<Gender, Dictionary<string, List<MeshPart>>> _bodies =
             new Dictionary<Gender, Dictionary<string, List<MeshPart>>>();
+        readonly Dictionary<string, BitmapSource> _skin = new Dictionary<string, BitmapSource>();
         readonly AxisAngleRotation3D _spin = new AxisAngleRotation3D(new Vector3D(0, 0, 1), 0);
         bool _ready;
         bool _suppress;
@@ -64,7 +65,7 @@ namespace ClothPreview
         static bool BodyComplete(Gender g)
         {
             var b = BodyImporter.LoadCached(g);
-            return b != null && b.Count >= 5;
+            return b != null && b.Count >= 5 && File.Exists(BodyImporter.FlagPath);
         }
 
         void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -73,7 +74,7 @@ namespace ClothPreview
 
             bool partial = File.Exists(BodyImporter.CachePath(Gender.Male)) || File.Exists(BodyImporter.CachePath(Gender.Female));
             string msg = partial
-                ? "El cuerpo guardado está incompleto (faltan torso, piernas o manos).\nHay que volver a importarlo desde tu GTA V; tarda unos minutos.\n\n¿Importarlo ahora?"
+                ? "El cuerpo guardado es de una versión anterior (sin la piel y el rostro, o incompleto).\nHay que volver a importarlo desde tu GTA V; tarda unos minutos.\n\n¿Importarlo ahora?"
                 : "Para ver las prendas puestas en un personaje (hombre o mujer) hay que importar el cuerpo desde tu GTA V.\nSe hace una sola vez y tarda unos minutos.\n\n¿Importarlo ahora?";
             if (MessageBox.Show(msg, "420 Tool´s", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
                 ImportBody_Click(null, null);
@@ -421,11 +422,34 @@ namespace ClothPreview
                 await System.Threading.Tasks.Task.Run(() =>
                     BodyImporter.ImportFromGta(folder, s => Dispatcher.BeginInvoke(new Action(() => Info.Text = s))));
                 _bodies.Clear();
+                _skin.Clear();
                 Rebuild(true);
                 result = Info.Text;
             }
             catch (Exception ex) { Info.Text = "Error importando el cuerpo:\n" + ex.Message; }
             finally { ImportButton.IsEnabled = true; }
+        }
+
+        // Textura de piel (rostro, torso, manos, piernas, pies) guardada al importar el cuerpo
+        BitmapSource SkinTex(Gender g, string comp)
+        {
+            string key = g + "_" + comp;
+            BitmapSource b;
+            if (_skin.TryGetValue(key, out b)) return b;
+            b = null;
+            string path = BodyImporter.SkinPath(g, comp);
+            if (File.Exists(path))
+            {
+                try
+                {
+                    var dec = BitmapDecoder.Create(new Uri(path), BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
+                    b = dec.Frames[0];
+                    b.Freeze();
+                }
+                catch { b = null; }
+            }
+            _skin[key] = b;
+            return b;
         }
 
         Dictionary<string, List<MeshPart>> GetBody(Gender g)
@@ -506,14 +530,25 @@ namespace ClothPreview
                 else
                 {
                     var hidden = new HashSet<string>(items.Select(i => i.Component));
-                    Material skin = MakeMaterial(new SolidColorBrush(Color.FromRgb(214, 168, 140)), 0.35);
+                    Material flat = MakeMaterial(new SolidColorBrush(Color.FromRgb(214, 168, 140)), 0.35);
+                    int skinCount = 0;
                     foreach (var kv in body)
                     {
                         if (hidden.Contains(kv.Key)) continue;
-                        foreach (var part in kv.Value) AddPart(group, part, skin, new Vector3D());
+                        Material m = flat;
+                        var stex = SkinTex(gender, kv.Key);
+                        if (stex != null)
+                        {
+                            var sb = new ImageBrush(stex) { TileMode = TileMode.Tile, Viewport = new Rect(0, 0, 1, 1) };
+                            RenderOptions.SetBitmapScalingMode(sb, BitmapScalingMode.Fant);
+                            m = MakeMaterial(sb, 0.30);
+                            skinCount++;
+                        }
+                        foreach (var part in kv.Value) AddPart(group, part, m, new Vector3D());
                     }
                     bodyNote = "\nCUERPO    " + string.Join("·", body.Keys.OrderBy(k => k)) +
-                               (body.Count < 5 ? "  (incompleto: vuelve a importar)" : "");
+                               (body.Count < 5 ? "  (incompleto: vuelve a importar)" : "") +
+                               "\nPIEL      " + skinCount + " texturas" + (skinCount == 0 ? " (vuelve a importar el cuerpo)" : "");
                 }
             }
 
