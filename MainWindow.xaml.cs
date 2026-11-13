@@ -289,10 +289,10 @@ namespace ClothPreview
 
             // Destello que cruza el 420 cada pocos segundos
             var shine = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
-            shine.KeyFrames.Add(new LinearDoubleKeyFrame(-60, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            shine.KeyFrames.Add(new EasingDoubleKeyFrame(120, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.9)),
+            shine.KeyFrames.Add(new LinearDoubleKeyFrame(-1.3, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            shine.KeyFrames.Add(new EasingDoubleKeyFrame(1.3, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(1.3)),
                 new QuadraticEase { EasingMode = EasingMode.EaseInOut }));
-            shine.KeyFrames.Add(new LinearDoubleKeyFrame(120, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4))));
+            shine.KeyFrames.Add(new LinearDoubleKeyFrame(1.3, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4.5))));
             LogoShine.BeginAnimation(TranslateTransform.XProperty, shine);
         }
 
@@ -317,12 +317,20 @@ namespace ClothPreview
 
         void ApplyBackdrop(int style)
         {
+            bool white = style == 2;
+            // En fondo blanco la ilustración (que brilla) no se vería: se usa el 420 grande en su lugar
+            WmArt.Visibility = white ? Visibility.Collapsed : Visibility.Visible;
+            WmBig.Visibility = white ? Visibility.Visible : Visibility.Collapsed;
+            CornerLogo.Visibility = white ? Visibility.Collapsed : Visibility.Visible;
+            Corner420.Visibility = white ? Visibility.Visible : Visibility.Collapsed;
+            Vignette.Visibility = white ? Visibility.Collapsed : Visibility.Visible;
+
             if (style == 1)        // negro
             {
                 BackdropFill.Fill = Radial("#1A1A1A", "#0A0A0A", "#000000");
-                WmBig.Foreground = Br("#14FFFFFF"); WmSmall.Foreground = Br("#44FFFFFF"); CornerRun.Foreground = Br("#AAFFFFFF");
+                WmArt.Opacity = 0.26; WmSmall.Foreground = Br("#55FFFFFF"); CornerRun.Foreground = Br("#AAFFFFFF");
             }
-            else if (style == 2)   // blanco
+            else if (white)        // blanco
             {
                 BackdropFill.Fill = Radial("#FFFFFF", "#EDEDF0", "#C9C9CF");
                 WmBig.Foreground = Br("#1EE50914"); WmSmall.Foreground = Br("#55000000"); CornerRun.Foreground = Br("#AA000000");
@@ -330,7 +338,7 @@ namespace ClothPreview
             else                   // rojo (por defecto)
             {
                 BackdropFill.Fill = Radial("#2A0508", "#0C0C0F", "#050506");
-                WmBig.Foreground = Br("#26E50914"); WmSmall.Foreground = Br("#44FFFFFF"); CornerRun.Foreground = Br("#AAFFFFFF");
+                WmArt.Opacity = 0.34; WmSmall.Foreground = Br("#66FFFFFF"); CornerRun.Foreground = Br("#AAFFFFFF");
             }
         }
 

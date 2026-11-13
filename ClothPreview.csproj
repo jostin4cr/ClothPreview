@@ -7,6 +7,7 @@
     <LangVersion>10.0</LangVersion>
     <RootNamespace>ClothPreview</RootNamespace>
     <AssemblyName>ClothPreview</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
   <!-- Evita que el código de CodeWalker se compile dentro de este proyecto -->
   <ItemGroup>
@@ -15,6 +16,9 @@
     <None Remove="libs\**" />
     <Page Remove="libs\**" />
     <ApplicationDefinition Remove="libs\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\*.png" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="HelixToolkit.Wpf" Version="2.25.0" />
