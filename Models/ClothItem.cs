@@ -30,6 +30,22 @@ namespace ClothPreview.Models
 
         public bool IsProp { get { return Component != null && Component.StartsWith("p_"); } }
 
+        static readonly Dictionary<string, string> Names = new Dictionary<string, string>
+        {
+            { "jbib", "Camiseta / torso" }, { "uppr", "Brazos / torso" }, { "lowr", "Pantalón" }, { "feet", "Zapatos" },
+            { "accs", "Accesorio (cadena, corbata)" }, { "task", "Chaleco / armadura" }, { "decl", "Calcomanía" },
+            { "teef", "Dientes" }, { "berd", "Barba / máscara" }, { "hair", "Pelo" }, { "hand", "Manos / guantes" },
+            { "head", "Cabeza" }, { "p_head", "Sombrero / gorra" }, { "p_eyes", "Gafas" }, { "p_ears", "Aretes / orejas" },
+            { "p_mouth", "Boca" }, { "p_lhand", "Mano izquierda" }, { "p_rhand", "Mano derecha" },
+            { "p_lwrist", "Reloj / muñeca izq." }, { "p_rwrist", "Muñeca derecha" }, { "p_hip", "Cadera" },
+            { "p_lfoot", "Pie izquierdo" }, { "p_rfoot", "Pie derecho" }
+        };
+
+        public string FriendlyName { get { string n; return Names.TryGetValue(Component ?? "", out n) ? n : Component; } }
+        public string Code { get { return Component + "_" + Index.ToString("000") + (string.IsNullOrEmpty(Suffix) ? "" : "_" + Suffix); } }
+        public string Detail { get { return Code + " · " + Textures.Count + (Textures.Count == 1 ? " textura" : " texturas"); } }
+        public string GenderGlyph { get { return Gender == Gender.Male ? "♂" : Gender == Gender.Female ? "♀" : ""; } }
+
         public string Display
         {
             get

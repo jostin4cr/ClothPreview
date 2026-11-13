@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
 using ClothPreview.Models;
@@ -38,6 +39,8 @@ namespace ClothPreview
             ModelHost.Transform = rot;
             Wire.Transform = rot;
             _ready = true;
+            StartLogoAnimations();
+            ApplyBackdrop(0);
             Info.Text = "Listo.";
             Loaded += MainWindow_Loaded;
         }
@@ -266,6 +269,132 @@ namespace ClothPreview
                     new DoubleAnimation(0, 360, TimeSpan.FromSeconds(14)) { RepeatBehavior = RepeatBehavior.Forever });
             else
                 _spin.BeginAnimation(AxisAngleRotation3D.AngleProperty, null);
+        }
+
+        // ---------- Logo animado ----------
+
+        void StartLogoAnimations()
+        {
+            var ease = new SineEase { EasingMode = EasingMode.EaseInOut };
+            var pulse = new TimeSpan(0, 0, 0, 1, 500);
+
+            // Brillo rojo que respira
+            LogoGlow.BeginAnimation(DropShadowEffect.BlurRadiusProperty,
+                new DoubleAnimation(6, 26, pulse) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease });
+
+            // Latido suave del logo
+            var beat = new DoubleAnimation(1.0, 1.045, pulse) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
+            LogoScale.BeginAnimation(ScaleTransform.ScaleXProperty, beat);
+            LogoScale.BeginAnimation(ScaleTransform.ScaleYProperty, beat.Clone());
+
+            // Destello que cruza el 420 cada pocos segundos
+            var shine = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever };
+            shine.KeyFrames.Add(new LinearDoubleKeyFrame(-60, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+            shine.KeyFrames.Add(new EasingDoubleKeyFrame(120, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(0.9)),
+                new QuadraticEase { EasingMode = EasingMode.EaseInOut }));
+            shine.KeyFrames.Add(new LinearDoubleKeyFrame(120, KeyTime.FromTimeSpan(TimeSpan.FromSeconds(4))));
+            LogoShine.BeginAnimation(TranslateTransform.XProperty, shine);
+        }
+
+        // ---------- Fondo de estudio y fotos ----------
+
+        static Brush Br(string hex) { return (Brush)new BrushConverter().ConvertFromString(hex); }
+
+        static RadialGradientBrush Radial(string a, string b, string c)
+        {
+            var r = new RadialGradientBrush
+            {
+                Center = new Point(0.5, 0.45),
+                GradientOrigin = new Point(0.5, 0.45),
+                RadiusX = 0.85,
+                RadiusY = 0.85
+            };
+            r.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString(a), 0));
+            r.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString(b), 0.65));
+            r.GradientStops.Add(new GradientStop((Color)ColorConverter.ConvertFromString(c), 1));
+            return r;
+        }
+
+        void ApplyBackdrop(int style)
+        {
+            if (style == 1)        // negro
+            {
+                BackdropFill.Fill = Radial("#1A1A1A", "#0A0A0A", "#000000");
+                WmBig.Foreground = Br("#14FFFFFF"); WmSmall.Foreground = Br("#44FFFFFF"); CornerRun.Foreground = Br("#AAFFFFFF");
+            }
+            else if (style == 2)   // blanco
+            {
+                BackdropFill.Fill = Radial("#FFFFFF", "#EDEDF0", "#C9C9CF");
+                WmBig.Foreground = Br("#1EE50914"); WmSmall.Foreground = Br("#55000000"); CornerRun.Foreground = Br("#AA000000");
+            }
+            else                   // rojo (por defecto)
+            {
+                BackdropFill.Fill = Radial("#2A0508", "#0C0C0F", "#050506");
+                WmBig.Foreground = Br("#26E50914"); WmSmall.Foreground = Br("#44FFFFFF"); CornerRun.Foreground = Br("#AAFFFFFF");
+            }
+        }
+
+        void Backdrop_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!_ready) return;
+            ApplyBackdrop(BgBlack.IsChecked == true ? 1 : BgWhite.IsChecked == true ? 2 : 0);
+        }
+
+        void Frame_Click(object sender, RoutedEventArgs e) { Viewport.ZoomExtents(); }
+
+        // Captura el visor (fondo + modelo + marca 420 Designs) sin la interfaz encima
+        RenderTargetBitmap CaptureViewport()
+        {
+            const double scale = 2.0;
+            HudLayer.Visibility = Visibility.Collapsed;
+            try
+            {
+                ViewportArea.UpdateLayout();
+                double w = ViewportArea.ActualWidth, h = ViewportArea.ActualHeight;
+                if (w < 10 || h < 10) return null;
+                var rtb = new RenderTargetBitmap((int)Math.Round(w * scale), (int)Math.Round(h * scale),
+                                                 96 * scale, 96 * scale, PixelFormats.Pbgra32);
+                var dv = new DrawingVisual();
+                using (var ctx = dv.RenderOpen())
+                    ctx.DrawRectangle(new VisualBrush(ViewportArea), null, new Rect(0, 0, w, h));
+                rtb.Render(dv);
+                return rtb;
+            }
+            finally { HudLayer.Visibility = Visibility.Visible; }
+        }
+
+        void Photo_Click(object sender, RoutedEventArgs e)
+        {
+            string name = _active != null ? _active.Code : "foto";
+            var dlg = new SaveFileDialog
+            {
+                Title = "Guardar foto",
+                Filter = "Imagen PNG|*.png",
+                FileName = "420Designs_" + name + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".png"
+            };
+            if (dlg.ShowDialog() != true) return;
+            try
+            {
+                var rtb = CaptureViewport();
+                if (rtb == null) { Info.Text = "No se pudo tomar la foto."; return; }
+                var enc = new PngBitmapEncoder();
+                enc.Frames.Add(BitmapFrame.Create(rtb));
+                using (var fs = File.Create(dlg.FileName)) enc.Save(fs);
+                Info.Text = "Foto guardada:\n" + dlg.FileName;
+            }
+            catch (Exception ex) { Info.Text = "Error al guardar la foto: " + ex.Message; }
+        }
+
+        void Copy_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var rtb = CaptureViewport();
+                if (rtb == null) { Info.Text = "No se pudo tomar la foto."; return; }
+                Clipboard.SetImage(rtb);
+                Info.Text = "Foto copiada al portapapeles.";
+            }
+            catch (Exception ex) { Info.Text = "Error al copiar la foto: " + ex.Message; }
         }
 
         // ---------- Cuerpo base ----------
