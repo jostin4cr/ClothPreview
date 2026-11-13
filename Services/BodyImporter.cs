@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using ClothPreview.Models;
 using CodeWalker.GameFiles;
 
@@ -13,7 +14,8 @@ namespace ClothPreview.Services
     /// y los guarda en un archivo de caché junto al programa. Se hace una sola vez.
     public static class BodyImporter
     {
-        static readonly string[] Wanted = { "head_000_r", "uppr_000_u", "lowr_000_u", "hand_000_r", "feet_000_u" };
+        // head_000_r, uppr_000_u, lowr_000_r, hand_000_u, feet_000_u... (acepta sufijo u o r)
+        static readonly Regex StemRx = new Regex(@"^(head|uppr|lowr|hand|feet)_000_[ur]$", RegexOptions.Compiled);
 
         public static string CachePath(Gender g)
         {
@@ -27,6 +29,13 @@ namespace ClothPreview.Services
             try { return BodyCache.Load(p); } catch { return null; }
         }
 
+        static bool InPedFolder(string path, Gender g)
+        {
+            string id = g == Gender.Male ? "mp_m_freemode_01" : "mp_f_freemode_01";
+            // ...\mp_m_freemode_01\x.ydd   o   ..._mp_m_freemode_01.rpf\x.ydd   (se excluyen los packs DLC y los props "_p")
+            return Regex.IsMatch(path, @"(^|[\\_])" + id + @"(\.rpf)?\\");
+        }
+
         public static void ImportFromGta(string gtaFolder, Action<string> status)
         {
             var sw = Stopwatch.StartNew();
@@ -36,11 +45,10 @@ namespace ClothPreview.Services
             RpfManager man = CreateManager(gtaFolder, throttled);
 
             status("Buscando los cuerpos base…");
-            var found = new Dictionary<Gender, Dictionary<string, RpfEntry>>
-            {
-                { Gender.Male, new Dictionary<string, RpfEntry>() },
-                { Gender.Female, new Dictionary<string, RpfEntry>() }
-            };
+            var genders = new[] { Gender.Male, Gender.Female };
+            var found = new Dictionary<Gender, Dictionary<string, RpfEntry>>();
+            var allStems = new Dictionary<Gender, SortedSet<string>>();
+            foreach (var g in genders) { found[g] = new Dictionary<string, RpfEntry>(); allStems[g] = new SortedSet<string>(); }
 
             foreach (RpfFile rpf in man.AllRpfs)
             {
@@ -50,18 +58,33 @@ namespace ClothPreview.Services
                     string name = entry.NameLower;
                     if (name == null || !name.EndsWith(".ydd")) continue;
                     string stem = name.Substring(0, name.Length - 4);
-                    if (!Wanted.Contains(stem)) continue;
-
                     string path = (entry.Path ?? "").Replace('/', '\\').ToLowerInvariant();
-                    foreach (var g in new[] { Gender.Male, Gender.Female })
+
+                    foreach (var g in genders)
                     {
-                        string folder = "\\" + (g == Gender.Male ? "mp_m_freemode_01" : "mp_f_freemode_01") + "\\";
-                        if (path.Contains(folder) && !found[g].ContainsKey(stem)) found[g][stem] = entry;
+                        if (!InPedFolder(path, g)) continue;
+                        allStems[g].Add(stem);
+                        if (StemRx.IsMatch(stem))
+                        {
+                            string comp = stem.Substring(0, 4);
+                            if (!found[g].ContainsKey(comp)) found[g][comp] = entry;
+                        }
                     }
                 }
             }
 
-            foreach (var g in new[] { Gender.Male, Gender.Female })
+            // Archivo de diagnóstico (por si falta alguna pieza)
+            try
+            {
+                var lines = new List<string>();
+                foreach (var g in genders)
+                    lines.Add((g == Gender.Male ? "HOMBRE: " : "MUJER: ") + string.Join(", ", allStems[g].Take(300)));
+                File.WriteAllLines(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "body_debug.txt"), lines.ToArray());
+            }
+            catch { }
+
+            var summary = new List<string>();
+            foreach (var g in genders)
             {
                 if (found[g].Count == 0)
                     throw new Exception("No encontré el cuerpo " + (g == Gender.Male ? "masculino" : "femenino") +
@@ -74,12 +97,13 @@ namespace ClothPreview.Services
                     var ydd = man.GetFile<YddFile>(kv.Value);
                     if (ydd == null) continue;
                     var parts = RageMeshLoader.FromYdd(ydd);
-                    if (parts.Count > 0) body[kv.Key.Substring(0, 4)] = parts;
+                    if (parts.Count > 0) body[kv.Key] = parts;
                 }
                 if (body.Count == 0) throw new Exception("No pude leer la malla del cuerpo.");
                 BodyCache.Save(CachePath(g), body);
+                summary.Add((g == Gender.Male ? "Hombre" : "Mujer") + ": " + string.Join("·", body.Keys.OrderBy(k => k)));
             }
-            status("Cuerpos importados correctamente.");
+            status("Cuerpos importados. " + string.Join("  |  ", summary));
         }
 
         // --- Llamadas a CodeWalker tolerantes a cambios de firma entre versiones ---

@@ -10,10 +10,12 @@ namespace ClothPreview.Services
     /// Empareja .ydd (modelo) con .ytd (texturas) por la convención de nombres de GTA V.
     public static class ClothPairing
     {
-        // jbib_000_u.ydd
+        // Ropa:      jbib_000_u.ydd  /  jbib_diff_000_a_uni.ytd
         static readonly Regex YddRx = new Regex(@"^(?<c>[a-z]+)_(?<i>\d{3})_(?<s>[ur])$", RegexOptions.IgnoreCase);
-        // jbib_diff_000_a_uni.ytd
         static readonly Regex YtdRx = new Regex(@"^(?<c>[a-z]+)_diff_(?<i>\d{3})_(?<v>[a-z])_(?<r>[a-z]{3})$", RegexOptions.IgnoreCase);
+        // Accesorios (props): p_head_000.ydd  /  p_head_diff_000_a.ytd
+        static readonly Regex PropYddRx = new Regex(@"^(?<c>p_[a-z0-9]+)_(?<i>\d{3})$", RegexOptions.IgnoreCase);
+        static readonly Regex PropYtdRx = new Regex(@"^(?<c>p_[a-z0-9]+)_diff_(?<i>\d{3})_(?<v>[a-z])$", RegexOptions.IgnoreCase);
 
         // FiveM: "mp_m_freemode_01_mp_m_pack^jbib_000_u" -> "jbib_000_u"
         static string Clean(string name)
@@ -56,31 +58,51 @@ namespace ClothPreview.Services
                 if (ext == ".ydd")
                 {
                     var m = YddRx.Match(name);
-                    if (!m.Success) continue;   // ignora _1 (primera persona), props, etc.
-                    items.Add(new ClothItem
+                    if (m.Success)
                     {
-                        Component = m.Groups["c"].Value.ToLowerInvariant(),
-                        Index = int.Parse(m.Groups["i"].Value),
-                        Suffix = m.Groups["s"].Value.ToLowerInvariant(),
-                        YddPath = f,
-                        Gender = DetectGender(f)
-                    });
+                        items.Add(new ClothItem
+                        {
+                            Component = m.Groups["c"].Value.ToLowerInvariant(),
+                            Index = int.Parse(m.Groups["i"].Value),
+                            Suffix = m.Groups["s"].Value.ToLowerInvariant(),
+                            YddPath = f,
+                            Gender = DetectGender(f)
+                        });
+                        continue;
+                    }
+                    m = PropYddRx.Match(name);
+                    if (m.Success)
+                    {
+                        items.Add(new ClothItem
+                        {
+                            Component = m.Groups["c"].Value.ToLowerInvariant(),
+                            Index = int.Parse(m.Groups["i"].Value),
+                            Suffix = "",
+                            YddPath = f,
+                            Gender = DetectGender(f)
+                        });
+                    }
                 }
                 else if (ext == ".ytd")
                 {
                     var m = YtdRx.Match(name);
+                    if (!m.Success) m = PropYtdRx.Match(name);
                     if (!m.Success) continue;
                     string key = m.Groups["c"].Value.ToLowerInvariant() + "_" + int.Parse(m.Groups["i"].Value);
-                    if (!textures.TryGetValue(key, out var list)) textures[key] = list = new List<TextureVariant>();
+                    List<TextureVariant> list;
+                    if (!textures.TryGetValue(key, out list)) textures[key] = list = new List<TextureVariant>();
                     list.Add(new TextureVariant { Label = name, Path = f });
                 }
             }
 
             foreach (var it in items)
-                if (textures.TryGetValue(it.Component + "_" + it.Index, out var list))
+            {
+                List<TextureVariant> list;
+                if (textures.TryGetValue(it.Component + "_" + it.Index, out list))
                     it.Textures.AddRange(list.OrderBy(t => t.Label, StringComparer.OrdinalIgnoreCase));
+            }
 
-            return items.OrderBy(i => i.Component).ThenBy(i => i.Index).ThenBy(i => i.Suffix).ToList();
+            return items.OrderBy(i => i.IsProp).ThenBy(i => i.Component).ThenBy(i => i.Index).ThenBy(i => i.Suffix).ToList();
         }
     }
 }

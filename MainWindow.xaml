@@ -174,6 +174,37 @@
       <Setter Property="FontWeight" Value="Bold" />
       <Setter Property="Margin" Value="0,14,0,6" />
     </Style>
+
+    <!-- Deslizador -->
+    <Style TargetType="Slider">
+      <Setter Property="Height" Value="20" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid Background="Transparent">
+              <Border Height="4" CornerRadius="2" Background="{StaticResource Line}" VerticalAlignment="Center" />
+              <Track x:Name="PART_Track">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Command="Slider.DecreaseLarge" Opacity="0" />
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb Width="14" Height="14">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Ellipse Fill="{StaticResource Red}" />
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Command="Slider.IncreaseLarge" Opacity="0" />
+                </Track.IncreaseRepeatButton>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Grid>
@@ -218,8 +249,12 @@
           <TextBlock Grid.Row="1" Foreground="{StaticResource Muted}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"
                      Text="…o arrastra una carpeta o los archivos de tu pack a esta ventana." />
           <StackPanel Grid.Row="2">
-            <TextBlock Style="{StaticResource SectionTitle}" Text="PRENDAS" />
-            <ListBox x:Name="ItemList" Background="Transparent" BorderThickness="0" MaxHeight="190"
+            <Grid>
+              <TextBlock Style="{StaticResource SectionTitle}" Text="PRENDAS  (clic para equipar, puedes elegir varias)" />
+              <Button Style="{StaticResource RedButton}" Content="LIMPIAR" Padding="8,2" FontSize="10"
+                      HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,0,4" Click="Clear_Click" />
+            </Grid>
+            <ListBox x:Name="ItemList" Background="Transparent" BorderThickness="0" MaxHeight="170" SelectionMode="Multiple"
                      DisplayMemberPath="Display" ItemContainerStyle="{StaticResource RowItem}"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      SelectionChanged="ItemList_SelectionChanged" />
@@ -261,6 +296,22 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
+
+          <StackPanel x:Name="PropPanel" Visibility="Collapsed">
+            <TextBlock Style="{StaticResource SectionTitle}" Text="AJUSTE DEL ACCESORIO" />
+            <Grid Margin="0,0,0,2"><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <TextBlock Text="X" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+              <Slider x:Name="OffXSlider" Grid.Column="1" Minimum="-0.6" Maximum="0.6" ValueChanged="Prop_Changed" />
+            </Grid>
+            <Grid Margin="0,0,0,2"><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <TextBlock Text="Y" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+              <Slider x:Name="OffYSlider" Grid.Column="1" Minimum="-0.6" Maximum="0.6" ValueChanged="Prop_Changed" />
+            </Grid>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <TextBlock Text="Z" Foreground="{StaticResource Muted}" VerticalAlignment="Center" />
+              <Slider x:Name="OffZSlider" Grid.Column="1" Minimum="-0.6" Maximum="0.6" ValueChanged="Prop_Changed" />
+            </Grid>
+          </StackPanel>
 
           <TextBlock Style="{StaticResource SectionTitle}" Text="VISTA" />
           <CheckBox x:Name="ShowBody" Content="Mostrar cuerpo" IsChecked="True" Checked="Option_Changed" Unchecked="Option_Changed" />
@@ -308,7 +359,7 @@
       <!-- Estadísticas -->
       <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="16" Padding="12,8"
               Background="#CC000000" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="6">
-        <TextBlock x:Name="Info" Foreground="{StaticResource Txt}" FontFamily="Consolas" FontSize="12" />
+        <TextBlock x:Name="Info" Foreground="{StaticResource Txt}" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" MaxWidth="440" />
       </Border>
 
       <!-- Aviso: cuerpo sin importar -->

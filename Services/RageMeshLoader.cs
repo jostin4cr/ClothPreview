@@ -11,16 +11,17 @@ using CodeWalker.GameFiles;
 namespace ClothPreview.Services
 {
     /// ADAPTADOR CodeWalker -> MeshPart.
-    /// Todo lo que depende de la API de CodeWalker.Core está SOLO en este archivo
-    /// (y en TextureLoader). Si tu copia de CodeWalker nombra algo distinto,
-    /// se corrige aquí sin tocar el resto del programa.
+    /// Todo lo que depende de la API de CodeWalker.Core está en este archivo y en TextureLoader/BodyImporter.
     public static class RageMeshLoader
     {
         // Tamaño en bytes de cada VertexComponentType de RAGE:
         // 0 Nothing, 1 Half2, 2 Float, 3 Half4, 4 FloatUnk, 5 Float2, 6 Float3, 7 Float4, 8 UByte4, 9 Colour, 10 Dec3N
         static readonly int[] CompSize = { 0, 4, 4, 8, 4, 8, 12, 16, 4, 4, 4 };
-
         const int SlotPosition = 0, SlotNormal = 3, SlotTexCoord0 = 6;
+
+        public static string LastSource = "";
+        public static string LastDiag = "";
+        static readonly List<string> Diag = new List<string>();
 
         public static List<MeshPart> Load(string path)
         {
@@ -32,42 +33,58 @@ namespace ClothPreview.Services
 
         public static List<MeshPart> FromYdd(YddFile ydd)
         {
+            Diag.Clear();
             var parts = new List<MeshPart>();
-            if (ydd.Drawables == null) return parts;
+            if (ydd.Drawables == null) { Diag.Add("el archivo no tiene drawables"); LastDiag = string.Join(" | ", Diag); return parts; }
 
             foreach (var drawable in ydd.Drawables)
             {
-                // Solo LOD alto, para no duplicar geometría.
                 int score;
                 var models = GetModels(drawable, out score);
-                if (models == null) continue;
+                if (models == null) { Diag.Add("sin modelos"); continue; }
 
                 var dparts = new List<MeshPart>();
                 foreach (var model in models)
                 {
-                    if (model?.Geometries == null) continue;
+                    if (model == null || model.Geometries == null) { Diag.Add("modelo sin geometrías"); continue; }
                     foreach (var geom in model.Geometries)
                     {
-                        var part = ReadGeometry(geom);
-                        if (part != null) dparts.Add(part);
+                        try
+                        {
+                            string why;
+                            var part = ReadGeometry(geom, out why);
+                            if (part != null) dparts.Add(part);
+                            else if (why != null) Diag.Add("geometría omitida: " + why);
+                        }
+                        catch (Exception ex)
+                        {
+                            Diag.Add("error en geometría: " + ex.GetType().Name + " " + ex.Message);
+                        }
                     }
                 }
                 parts.AddRange(score < 3 ? DropLodDuplicates(dparts) : dparts);
             }
+            LastDiag = string.Join(" | ", Diag.Take(3));
             return parts;
         }
 
-        static MeshPart ReadGeometry(DrawableGeometry geom)
+        static MeshPart ReadGeometry(DrawableGeometry geom, out string why)
         {
+            why = null;
             var vb = geom.VertexBuffer;
             var ib = geom.IndexBuffer;
-            if (vb == null || ib?.Indices == null) return null;
+            if (vb == null) { why = "sin buffer de vértices"; return null; }
+            if (ib == null || ib.Indices == null) { why = "sin índices"; return null; }
 
             byte[] buf = GetBytes(vb.Data1);
-            if (buf == null) return null;
+            if (buf == null) buf = GetBytes(ReadByName(vb, "Data2"));
+            if (buf == null) { why = "sin datos de vértices"; return null; }
+
             int stride = vb.VertexStride;
             int count = (int)vb.VertexCount;
-            if (stride <= 0 || count <= 0 || (long)stride * count > buf.Length) return null;
+            if (stride <= 0) { why = "stride 0"; return null; }
+            if ((long)stride * count > buf.Length) count = buf.Length / stride;   // por si el contador no coincide
+            if (count <= 0) { why = "0 vértices"; return null; }
 
             // Offsets de cada componente a partir de Flags (bit por slot) y Types (4 bits por slot)
             ulong flags = Convert.ToUInt64(vb.Info.Flags);
@@ -83,39 +100,48 @@ namespace ClothPreview.Services
                 type[slot] = t;
                 off += t < CompSize.Length ? CompSize[t] : 0;
             }
-            if (offset[SlotPosition] < 0) return null;
+            if (offset[SlotPosition] < 0 || offset[SlotPosition] + 12 > stride) { why = "sin posición válida"; return null; }
+
+            bool okNormal = offset[SlotNormal] >= 0 &&
+                            ((type[SlotNormal] == 6 && offset[SlotNormal] + 12 <= stride) ||
+                             (type[SlotNormal] == 10 && offset[SlotNormal] + 4 <= stride));
+            bool okUv = offset[SlotTexCoord0] >= 0 &&
+                        ((type[SlotTexCoord0] == 5 && offset[SlotTexCoord0] + 8 <= stride) ||
+                         (type[SlotTexCoord0] == 1 && offset[SlotTexCoord0] + 4 <= stride));
 
             var part = new MeshPart
             {
                 Positions = new Point3D[count],
-                Normals = (offset[SlotNormal] >= 0 && type[SlotNormal] == 6) ? new Vector3D[count] : null,
-                TexCoords = offset[SlotTexCoord0] >= 0 ? new Point[count] : null
+                Normals = okNormal ? new Vector3D[count] : null,
+                TexCoords = okUv ? new Point[count] : null
             };
 
             for (int i = 0; i < count; i++)
             {
                 int b = i * stride;
+                int po = b + offset[SlotPosition];
                 part.Positions[i] = new Point3D(
-                    BitConverter.ToSingle(buf, b + offset[SlotPosition]),
-                    BitConverter.ToSingle(buf, b + offset[SlotPosition] + 4),
-                    BitConverter.ToSingle(buf, b + offset[SlotPosition] + 8));
+                    BitConverter.ToSingle(buf, po), BitConverter.ToSingle(buf, po + 4), BitConverter.ToSingle(buf, po + 8));
 
-                if (part.Normals != null)
+                if (okNormal)
                 {
                     int o = b + offset[SlotNormal];
-                    part.Normals[i] = new Vector3D(
-                        BitConverter.ToSingle(buf, o), BitConverter.ToSingle(buf, o + 4), BitConverter.ToSingle(buf, o + 8));
+                    if (type[SlotNormal] == 6)
+                        part.Normals[i] = new Vector3D(BitConverter.ToSingle(buf, o), BitConverter.ToSingle(buf, o + 4), BitConverter.ToSingle(buf, o + 8));
+                    else
+                    {
+                        uint v = BitConverter.ToUInt32(buf, o);   // Dec3N: 3 x 10 bits con signo
+                        part.Normals[i] = new Vector3D(Snorm10(v), Snorm10(v >> 10), Snorm10(v >> 20));
+                    }
                 }
 
-                if (part.TexCoords != null)
+                if (okUv)
                 {
                     int o = b + offset[SlotTexCoord0];
-                    if (type[SlotTexCoord0] == 5)        // Float2
+                    if (type[SlotTexCoord0] == 5)
                         part.TexCoords[i] = new Point(BitConverter.ToSingle(buf, o), BitConverter.ToSingle(buf, o + 4));
-                    else if (type[SlotTexCoord0] == 1)   // Half2
-                        part.TexCoords[i] = new Point(Half(BitConverter.ToUInt16(buf, o)), Half(BitConverter.ToUInt16(buf, o + 2)));
                     else
-                        part.TexCoords[i] = new Point(0, 0);
+                        part.TexCoords[i] = new Point(Half(BitConverter.ToUInt16(buf, o)), Half(BitConverter.ToUInt16(buf, o + 2)));
                 }
             }
 
@@ -126,13 +152,12 @@ namespace ClothPreview.Services
                 int a = ib.Indices[i], c = ib.Indices[i + 1], d = ib.Indices[i + 2];
                 if (a < count && c < count && d < count) { idx.Add(a); idx.Add(c); idx.Add(d); }
             }
+            if (idx.Count == 0) { why = "sin triángulos válidos"; return null; }
             part.Indices = idx.ToArray();
-            return part.Indices.Length > 0 ? part : null;
+            return part;
         }
 
         // --- Búsqueda tolerante a cambios de nombre en CodeWalker ---
-
-        public static string LastSource = "";
 
         static object ReadMember(MemberInfo m, object target)
         {
@@ -145,6 +170,13 @@ namespace ClothPreview.Services
             }
             catch { }
             return null;
+        }
+
+        static object ReadByName(object target, string name)
+        {
+            if (target == null) return null;
+            var m = target.GetType().GetMember(name, BindingFlags.Public | BindingFlags.Instance).FirstOrDefault();
+            return m == null ? null : ReadMember(m, target);
         }
 
         /// Busca los modelos del LOD alto. score: 4 = anidado "High", 3 = miembro "High",
@@ -172,7 +204,6 @@ namespace ClothPreview.Services
                     continue;
                 }
 
-                // Objeto anidado de CodeWalker (por ejemplo DrawableModels.High)
                 var t = val.GetType();
                 if (val is string || t.IsPrimitive || t.IsEnum || val is Array) continue;
                 if (t.Namespace != "CodeWalker.GameFiles") continue;
@@ -189,6 +220,36 @@ namespace ClothPreview.Services
             }
             LastSource = (src == "" ? "ninguna" : src) + " [nivel " + bestScore + "]";
             return best;
+        }
+
+        static DrawableModel[] AsModels(object val)
+        {
+            if (val == null) return null;
+            var direct = val as DrawableModel[];
+            if (direct != null) return direct;
+            var t = val.GetType();
+            object inner = null;
+            var f = t.GetField("data_items", BindingFlags.Public | BindingFlags.Instance);
+            if (f != null) inner = f.GetValue(val);
+            else
+            {
+                var p = t.GetProperty("data_items", BindingFlags.Public | BindingFlags.Instance);
+                if (p != null) inner = p.GetValue(val, null);
+            }
+            return inner as DrawableModel[];
+        }
+
+        static byte[] GetBytes(object o)
+        {
+            if (o == null) return null;
+            var direct = o as byte[];
+            if (direct != null) return direct;
+            foreach (var m in o.GetType().GetMembers(BindingFlags.Public | BindingFlags.Instance))
+            {
+                var bytes = ReadMember(m, o) as byte[];
+                if (bytes != null && bytes.Length > 0) return bytes;
+            }
+            return null;
         }
 
         // Si no se pudo aislar el LOD alto, quita las copias casi idénticas (LOD medio/bajo).
@@ -235,43 +296,11 @@ namespace ClothPreview.Services
                 && Math.Abs((a.Z + a.SizeZ / 2) - (b.Z + b.SizeZ / 2)) < 0.1 * m;
         }
 
-        static DrawableModel[] AsModels(object val)
+        static double Snorm10(uint v)
         {
-            if (val == null) return null;
-            var direct = val as DrawableModel[];
-            if (direct != null) return direct;
-            var t = val.GetType();
-            object inner = null;
-            var f = t.GetField("data_items", BindingFlags.Public | BindingFlags.Instance);
-            if (f != null) inner = f.GetValue(val);
-            else
-            {
-                var p = t.GetProperty("data_items", BindingFlags.Public | BindingFlags.Instance);
-                if (p != null) inner = p.GetValue(val, null);
-            }
-            return inner as DrawableModel[];
-        }
-
-        static byte[] GetBytes(object o)
-        {
-            if (o == null) return null;
-            var direct = o as byte[];
-            if (direct != null) return direct;
-            foreach (var m in o.GetType().GetMembers(BindingFlags.Public | BindingFlags.Instance))
-            {
-                object val = null;
-                try
-                {
-                    var pi = m as PropertyInfo;
-                    var fi = m as FieldInfo;
-                    if (pi != null && pi.GetIndexParameters().Length == 0) val = pi.GetValue(o, null);
-                    else if (fi != null) val = fi.GetValue(o);
-                }
-                catch { continue; }
-                var bytes = val as byte[];
-                if (bytes != null && bytes.Length > 0) return bytes;
-            }
-            return null;
+            int s = (int)(v & 0x3FF);
+            if (s >= 512) s -= 1024;
+            return s / 511.0;
         }
 
         static double Half(ushort h)

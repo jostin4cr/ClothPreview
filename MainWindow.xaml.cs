@@ -21,10 +21,8 @@ namespace ClothPreview
         [DllImport("dwmapi.dll")]
         static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
-        List<MeshPart> _parts = new List<MeshPart>();
-        List<PartToggle> _toggles = new List<PartToggle>();
-        BitmapSource _tex;
-        ClothItem _item;
+        ClothItem _active;      // la prenda cuyos controles se muestran (la última elegida)
+        bool _framed;
         readonly Dictionary<Gender, Dictionary<string, List<MeshPart>>> _bodies =
             new Dictionary<Gender, Dictionary<string, List<MeshPart>>>();
         readonly AxisAngleRotation3D _spin = new AxisAngleRotation3D(new Vector3D(0, 0, 1), 0);
@@ -58,17 +56,22 @@ namespace ClothPreview
             catch { }
         }
 
+        static bool BodyComplete(Gender g)
+        {
+            var b = BodyImporter.LoadCached(g);
+            return b != null && b.Count >= 5;
+        }
+
         void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            bool hasBody = File.Exists(BodyImporter.CachePath(Gender.Male)) && File.Exists(BodyImporter.CachePath(Gender.Female));
-            if (!hasBody)
-            {
-                var r = MessageBox.Show(
-                    "Para ver las prendas puestas en un personaje (hombre o mujer) hay que importar el cuerpo desde tu GTA V.\n" +
-                    "Se hace una sola vez y tarda unos minutos.\n\n¿Importarlo ahora?",
-                    "420 Tool´s", MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (r == MessageBoxResult.Yes) ImportBody_Click(null, null);
-            }
+            if (BodyComplete(Gender.Male) && BodyComplete(Gender.Female)) return;
+
+            bool partial = File.Exists(BodyImporter.CachePath(Gender.Male)) || File.Exists(BodyImporter.CachePath(Gender.Female));
+            string msg = partial
+                ? "El cuerpo guardado está incompleto (faltan torso, piernas o manos).\nHay que volver a importarlo desde tu GTA V; tarda unos minutos.\n\n¿Importarlo ahora?"
+                : "Para ver las prendas puestas en un personaje (hombre o mujer) hay que importar el cuerpo desde tu GTA V.\nSe hace una sola vez y tarda unos minutos.\n\n¿Importarlo ahora?";
+            if (MessageBox.Show(msg, "420 Tool´s", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                ImportBody_Click(null, null);
         }
 
         // ---------- Carga de archivos ----------
@@ -87,39 +90,93 @@ namespace ClothPreview
         void LoadPaths(IEnumerable<string> paths)
         {
             var items = ClothPairing.Scan(paths);
+            _active = null;
+            _framed = false;
             ItemList.ItemsSource = items;
-            Info.Text = items.Count + " prendas encontradas";
+            ShowActive();
+            Info.Text = items.Count + " prendas encontradas.\nHaz clic en una (o en varias) para equiparla.";
             if (items.Count > 0) ItemList.SelectedIndex = 0;
+            else Rebuild(false);
         }
 
-        void ItemList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        void Clear_Click(object sender, RoutedEventArgs e) { ItemList.UnselectAll(); }
+
+        static BitmapSource SafeTexture(string path)
         {
-            _item = ItemList.SelectedItem as ClothItem;
-            if (_item == null) return;
+            try { return TextureLoader.Load(path); } catch { return null; }
+        }
 
-            try { _parts = RageMeshLoader.Load(_item.YddPath); }
-            catch (Exception ex) { _parts = new List<MeshPart>(); Info.Text = "Error leyendo el modelo: " + ex.Message; }
-
-            _toggles = _parts.Select((p, i) => new PartToggle
+        void EnsureLoaded(ClothItem it)
+        {
+            if (it == null || it.Parts != null) return;
+            try
+            {
+                it.Parts = RageMeshLoader.Load(it.YddPath);
+                it.Diag = RageMeshLoader.LastDiag;
+                it.Source = RageMeshLoader.LastSource;
+            }
+            catch (Exception ex)
+            {
+                it.Parts = new List<MeshPart>();
+                it.Diag = "Error: " + ex.Message;
+            }
+            it.Toggles = it.Parts.Select((p, i) => new PartToggle
             {
                 Name = "Parte " + (i + 1) + " · " + (p.Indices.Length / 3) + " tri",
                 IsVisible = true
             }).ToList();
-            _suppress = true;
-            PartList.ItemsSource = _toggles;
-            _suppress = false;
+            it.VariantIndex = 0;
+            if (it.Textures.Count > 0) it.Tex = SafeTexture(it.Textures[0].Path);
+        }
 
-            VariantBox.ItemsSource = _item.Textures;
-            if (_item.Textures.Count > 0) VariantBox.SelectedIndex = 0;   // dispara el cambio de textura
-            else { _tex = null; Rebuild(true); }
+        void ItemList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!_ready) return;
+            foreach (var o in e.AddedItems) EnsureLoaded(o as ClothItem);
+
+            var sel = ItemList.SelectedItems.Cast<ClothItem>().ToList();
+            if (e.AddedItems.Count > 0) _active = e.AddedItems[e.AddedItems.Count - 1] as ClothItem;
+            else if (_active == null || !sel.Contains(_active)) _active = sel.LastOrDefault();
+            if (sel.Count == 0) _framed = false;
+
+            ShowActive();
+            Rebuild(false);
+        }
+
+        // Muestra en el panel los controles de la prenda activa
+        void ShowActive()
+        {
+            _suppress = true;
+            try
+            {
+                if (_active == null)
+                {
+                    VariantBox.ItemsSource = null;
+                    PartList.ItemsSource = null;
+                    PropPanel.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    VariantBox.ItemsSource = _active.Textures;
+                    VariantBox.SelectedIndex = _active.Textures.Count > 0 ? _active.VariantIndex : -1;
+                    PartList.ItemsSource = _active.Toggles;
+                    PropPanel.Visibility = _active.IsProp ? Visibility.Visible : Visibility.Collapsed;
+                    OffXSlider.Value = _active.OffX;
+                    OffYSlider.Value = _active.OffY;
+                    OffZSlider.Value = _active.OffZ;
+                }
+            }
+            finally { _suppress = false; }
         }
 
         void VariantBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            var v = VariantBox.SelectedItem as TextureVariant;
-            try { _tex = v == null ? null : TextureLoader.Load(v.Path); }
-            catch (Exception ex) { _tex = null; Info.Text = "Error leyendo la textura: " + ex.Message; }
-            Rebuild(true);
+            if (!_ready || _suppress || _active == null) return;
+            int i = VariantBox.SelectedIndex;
+            if (i < 0 || i >= _active.Textures.Count) return;
+            _active.VariantIndex = i;
+            _active.Tex = SafeTexture(_active.Textures[i].Path);
+            Rebuild(false);
         }
 
         void Option_Changed(object sender, RoutedEventArgs e) { if (_ready) Rebuild(false); }
@@ -132,6 +189,15 @@ namespace ClothPreview
             if (t == null || _suppress) return;
             t.IsVisible = cb.IsChecked == true;
             if (_ready) Rebuild(false);
+        }
+
+        void Prop_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (!_ready || _suppress || _active == null) return;
+            _active.OffX = OffXSlider.Value;
+            _active.OffY = OffYSlider.Value;
+            _active.OffZ = OffZSlider.Value;
+            Rebuild(false);
         }
 
         void Spin_Changed(object sender, RoutedEventArgs e)
@@ -154,12 +220,14 @@ namespace ClothPreview
 
             ImportButton.IsEnabled = false;
             Info.Text = "Leyendo GTA V… puede tardar varios minutos.\nNo cierres el programa.";
+            string result = null;
             try
             {
                 await System.Threading.Tasks.Task.Run(() =>
                     BodyImporter.ImportFromGta(folder, s => Dispatcher.BeginInvoke(new Action(() => Info.Text = s))));
                 _bodies.Clear();
                 Rebuild(true);
+                result = Info.Text;
             }
             catch (Exception ex) { Info.Text = "Error importando el cuerpo:\n" + ex.Message; }
             finally { ImportButton.IsEnabled = true; }
@@ -171,12 +239,14 @@ namespace ClothPreview
             return _bodies[g];
         }
 
-        Gender ResolveGender(out string note)
+        Gender ResolveGender(IList<ClothItem> items, out string note)
         {
             if (GenMale.IsChecked == true) { note = "Hombre"; return Gender.Male; }
             if (GenFemale.IsChecked == true) { note = "Mujer"; return Gender.Female; }
-            if (_item != null && _item.Gender == Gender.Female) { note = "Mujer (detectado)"; return Gender.Female; }
-            if (_item != null && _item.Gender == Gender.Male) { note = "Hombre (detectado)"; return Gender.Male; }
+            var f = items.Count(i => i.Gender == Gender.Female);
+            var m = items.Count(i => i.Gender == Gender.Male);
+            if (f > 0 && f >= m) { note = "Mujer (detectado)"; return Gender.Female; }
+            if (m > 0) { note = "Hombre (detectado)"; return Gender.Male; }
             note = "Hombre (no detectado)";
             return Gender.Male;
         }
@@ -194,7 +264,19 @@ namespace ClothPreview
             return group;
         }
 
-        static int AddPart(Model3DGroup group, MeshPart p, Material mat)
+        Material ClothMaterial(ClothItem it)
+        {
+            Brush brush = Brushes.LightGray;
+            if (ShowTexture.IsChecked == true && it.Tex != null)
+            {
+                var ib = new ImageBrush(it.Tex) { TileMode = TileMode.Tile, Viewport = new Rect(0, 0, 1, 1) };
+                RenderOptions.SetBitmapScalingMode(ib, BitmapScalingMode.Fant);
+                brush = ib;
+            }
+            return MakeMaterial(brush, 0.45);
+        }
+
+        static int AddPart(Model3DGroup group, MeshPart p, Material mat, Vector3D offset)
         {
             var mesh = new MeshGeometry3D
             {
@@ -203,7 +285,9 @@ namespace ClothPreview
             };
             if (p.Normals != null) mesh.Normals = new Vector3DCollection(p.Normals);
             if (p.TexCoords != null) mesh.TextureCoordinates = new PointCollection(p.TexCoords);
-            group.Children.Add(new GeometryModel3D(mesh, mat) { BackMaterial = mat });
+            var gm = new GeometryModel3D(mesh, mat) { BackMaterial = mat };
+            if (offset.X != 0 || offset.Y != 0 || offset.Z != 0) gm.Transform = new TranslateTransform3D(offset);
+            group.Children.Add(gm);
             return p.Indices.Length / 3;
         }
 
@@ -211,71 +295,80 @@ namespace ClothPreview
         {
             if (!_ready) return;
 
+            var items = ItemList.SelectedItems.Cast<ClothItem>().ToList();
             string genderNote;
-            Gender gender = ResolveGender(out genderNote);
-
-            Brush clothBrush = Brushes.LightGray;
-            if (ShowTexture.IsChecked == true && _tex != null)
-            {
-                var ib = new ImageBrush(_tex) { TileMode = TileMode.Tile, Viewport = new Rect(0, 0, 1, 1) };
-                RenderOptions.SetBitmapScalingMode(ib, BitmapScalingMode.Fant);
-                clothBrush = ib;
-            }
-            Material clothMat = MakeMaterial(clothBrush, 0.45);
+            Gender gender = ResolveGender(items, out genderNote);
+            var body = GetBody(gender);
 
             var group = new Model3DGroup();
             string bodyNote = "";
             bool bodyMissing = false;
 
-            // Cuerpo (sin la pieza que reemplaza la prenda)
+            // Cuerpo (sin las piezas que reemplazan las prendas elegidas)
             if (ShowBody.IsChecked == true)
             {
-                var body = GetBody(gender);
-                if (body == null) { bodyMissing = true; bodyNote = "\nCUERPO   sin importar"; }
+                if (body == null) { bodyMissing = true; bodyNote = "\nCUERPO    sin importar"; }
                 else
                 {
+                    var hidden = new HashSet<string>(items.Select(i => i.Component));
                     Material skin = MakeMaterial(new SolidColorBrush(Color.FromRgb(214, 168, 140)), 0.35);
-                    int shown = 0;
                     foreach (var kv in body)
                     {
-                        if (_item != null && kv.Key == _item.Component) continue;
-                        foreach (var part in kv.Value) { AddPart(group, part, skin); shown++; }
+                        if (hidden.Contains(kv.Key)) continue;
+                        foreach (var part in kv.Value) AddPart(group, part, skin, new Vector3D());
                     }
-                    bodyNote = "\nCUERPO   " + body.Count + " piezas";
+                    bodyNote = "\nCUERPO    " + string.Join("·", body.Keys.OrderBy(k => k)) +
+                               (body.Count < 5 ? "  (incompleto: vuelve a importar)" : "");
                 }
             }
 
-            // Prenda
+            // Prendas equipadas
             var wire = new Point3DCollection();
-            int tris = 0;
-            for (int n = 0; n < _parts.Count; n++)
+            int tris = 0, partsCount = 0;
+            foreach (var it in items)
             {
-                if (n < _toggles.Count && !_toggles[n].IsVisible) continue;
-                var p = _parts[n];
-                tris += AddPart(group, p, clothMat);
-                if (WireBox.IsChecked == true)
-                    for (int i = 0; i + 2 < p.Indices.Length; i += 3)
-                    {
-                        var a = p.Positions[p.Indices[i]];
-                        var b = p.Positions[p.Indices[i + 1]];
-                        var c = p.Positions[p.Indices[i + 2]];
-                        wire.Add(a); wire.Add(b); wire.Add(b); wire.Add(c); wire.Add(c); wire.Add(a);
-                    }
+                if (it.Parts == null) continue;
+                var off = new Vector3D();
+                if (it.IsProp) off = PropAnchor.For(it.Component, body) + new Vector3D(it.OffX, it.OffY, it.OffZ);
+                Material mat = ClothMaterial(it);
+
+                for (int n = 0; n < it.Parts.Count; n++)
+                {
+                    if (n < it.Toggles.Count && !it.Toggles[n].IsVisible) continue;
+                    var p = it.Parts[n];
+                    tris += AddPart(group, p, mat, off);
+                    partsCount++;
+                    if (WireBox.IsChecked == true)
+                        for (int i = 0; i + 2 < p.Indices.Length; i += 3)
+                        {
+                            var a = p.Positions[p.Indices[i]] + off;
+                            var b = p.Positions[p.Indices[i + 1]] + off;
+                            var c = p.Positions[p.Indices[i + 2]] + off;
+                            wire.Add(a); wire.Add(b); wire.Add(b); wire.Add(c); wire.Add(c); wire.Add(a);
+                        }
+                }
             }
 
             ModelHost.Content = group;
             Wire.Points = wire;
-            if (zoom && group.Children.Count > 0) Viewport.ZoomExtents();
+            if ((zoom || !_framed) && group.Children.Count > 0) { Viewport.ZoomExtents(); _framed = true; }
 
             BodyOverlay.Visibility = bodyMissing ? Visibility.Visible : Visibility.Collapsed;
-            DropHint.Visibility = _item == null ? Visibility.Visible : Visibility.Collapsed;
-            ItemTitle.Text = _item == null ? "SIN PRENDA" : _item.Component.ToUpperInvariant() + "_" + _item.Index.ToString("000");
+            DropHint.Visibility = ItemList.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            ItemTitle.Text = items.Count == 0 ? "SIN PRENDA"
+                           : items.Count == 1 ? items[0].Component.ToUpperInvariant() + "_" + items[0].Index.ToString("000")
+                           : "OUTFIT · " + items.Count + " PRENDAS";
 
-            string texInfo = _tex != null ? _tex.PixelWidth + "x" + _tex.PixelHeight : "ninguna";
-            Info.Text = "TRIÁNGULOS " + tris.ToString("N0") + "   PARTES " + _parts.Count +
-                        "\nTEXTURA  " + texInfo +
-                        "\nPERSONAJE " + genderNote + bodyNote +
-                        "\nMODELOS  " + RageMeshLoader.LastSource;
+            string texInfo = _active != null && _active.Tex != null ? _active.Tex.PixelWidth + "x" + _active.Tex.PixelHeight : "ninguna";
+            string text = "TRIÁNGULOS " + tris.ToString("N0") + "   PARTES " + partsCount + "   EQUIPADAS " + items.Count +
+                          "\nTEXTURA   " + texInfo +
+                          "\nPERSONAJE " + genderNote + bodyNote;
+            if (_active != null)
+            {
+                if (!string.IsNullOrEmpty(_active.Source)) text += "\nMODELOS   " + _active.Source;
+                if (!string.IsNullOrEmpty(_active.Diag)) text += "\nAVISO     " + _active.Diag;
+            }
+            Info.Text = text;
         }
     }
 }
